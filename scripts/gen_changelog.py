@@ -1,30 +1,54 @@
-import git
-import os
-import openai
+"""Generate a commit changelog using OpenAI."""
+
+import argparse
 import logging
+import os
 from datetime import datetime
+
+import git
+from git import NULL_TREE
+import openai
 from tqdm import tqdm
 
-# Configure OpenAI API key
-openai.api_key = os.getenv("OPENAI_API_KEY")
-if not openai.api_key:
-    raise ValueError("OpenAI API key is not set. Please configure the 'OPENAI_API_KEY' environment variable.")
-
-# Initialize repository
-repo_path = os.getcwd()
-repo = git.Repo(repo_path)
-
 # Configure logging
-logging.basicConfig(filename='changelog_errors.log', level=logging.ERROR)
+logging.basicConfig(filename="changelog_errors.log", level=logging.ERROR)
 
-def summarize_commit(commit, max_tokens=300):
+
+def parse_args() -> argparse.Namespace:
+    """Return parsed command line arguments."""
+    parser = argparse.ArgumentParser(description="Generate an AI-powered changelog")
+    parser.add_argument(
+        "--repo",
+        default=os.getcwd(),
+        help="Path to the git repository (default: current directory)",
+    )
+    parser.add_argument(
+        "--output",
+        default="changelog.md",
+        help="Markdown file to write changelog to",
+    )
+    parser.add_argument(
+        "--max-commits",
+        type=int,
+        default=50,
+        help="Number of recent commits to include",
+    )
+    parser.add_argument(
+        "--model",
+        default=os.getenv("OPENAI_MODEL", "gpt-4"),
+        help="OpenAI model to use",
+    )
+    return parser.parse_args()
+
+def summarize_commit(commit, model, max_tokens=300):
     """
     Generate a summary of a commit using OpenAI.
     """
     commit_message = commit.message.strip()
+    parent = commit.parents[0] if commit.parents else NULL_TREE
     diff = "\n".join(
-        diff.diff.decode("utf-8", errors="ignore")
-        for diff in commit.diff(None, create_patch=True)
+        d.diff.decode("utf-8", errors="ignore")
+        for d in commit.diff(parent, create_patch=True)
     )
 
     prompt = f"""
@@ -42,7 +66,7 @@ def summarize_commit(commit, max_tokens=300):
 
     try:
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model=model,
             messages=[
                 {"role": "system", "content": "Summarize code changes for changelogs."},
                 {"role": "user", "content": prompt}
@@ -54,13 +78,13 @@ def summarize_commit(commit, max_tokens=300):
         logging.error(f"Error summarizing commit {commit.hexsha[:7]}: {e}")
         return "Summary unavailable."
 
-def generate_changelog(max_commits=50):
+def generate_changelog(repo, model, max_commits=50):
     """
     Generate a changelog with OpenAI-generated summaries.
     """
     changelog = []
     for commit in tqdm(repo.iter_commits(max_count=max_commits), desc="Processing commits"):
-        summary = summarize_commit(commit)
+        summary = summarize_commit(commit, model)
         changelog.append({
             "hash": commit.hexsha[:7],
             "message": commit.message.strip(),
@@ -69,7 +93,7 @@ def generate_changelog(max_commits=50):
         })
     return changelog
 
-def write_changelog_to_markdown(changelog, output_file="changelog.md"):
+def write_changelog_to_markdown(changelog, output_file: str) -> None:
     """
     Write the changelog to a markdown file.
     """
@@ -84,8 +108,20 @@ def write_changelog_to_markdown(changelog, output_file="changelog.md"):
             f.write(f"**Commit Message:** {entry['message']}\n\n")
             f.write(f"**AI Summary:** {entry['summary']}\n\n")
 
+def main() -> None:
+    args = parse_args()
+
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+    if not openai.api_key:
+        raise ValueError(
+            "OpenAI API key is not set. Please configure the 'OPENAI_API_KEY' environment variable."
+        )
+
+    repo = git.Repo(args.repo)
+    changelog = generate_changelog(repo, args.model, max_commits=args.max_commits)
+    write_changelog_to_markdown(changelog, args.output)
+    print(f"Changelog generated and saved to '{args.output}'")
+
+
 if __name__ == "__main__":
-    print("Generating AI-powered changelog...")
-    changelog = generate_changelog()
-    write_changelog_to_markdown(changelog)
-    print("Changelog generated and saved to 'changelog.md'")
+    main()
