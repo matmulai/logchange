@@ -6,10 +6,16 @@ import os
 import sys
 
 import git
-from openai import OpenAI
+from openai import OpenAI, APIError, RateLimitError, APIConnectionError
+
+from cache_utils import APICache, RateLimiter
 
 # Configure logging
-logging.basicConfig(filename="commit_msg_errors.log", level=logging.ERROR)
+logging.basicConfig(
+    filename="commit_msg_errors.log",
+    level=logging.ERROR,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,6 +53,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=72,
         help="Maximum length for commit message subject line",
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable caching of API responses",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear all cached responses and exit",
     )
     return parser.parse_args()
 
@@ -87,10 +103,19 @@ def get_diff_content(repo, commit_hash=None, staged_only=False):
         return None, None, f"Error getting diff: {e}"
 
 
-def generate_commit_message(client, model, diff_text, original_message, style, max_length):
+def generate_commit_message(
+    client, model, diff_text, original_message, style, max_length, cache=None, rate_limiter=None
+):
     """
     Generate a commit message using OpenAI based on the diff.
     """
+    # Check cache first
+    if cache:
+        cached_response = cache.get(diff_text, model, style)
+        if cached_response:
+            print("[Using cached response]", file=sys.stderr)
+            return cached_response
+
     style_instructions = {
         "conventional": """Follow Conventional Commits format:
 <type>(<scope>): <subject>
@@ -127,6 +152,10 @@ Code Changes:
     if original_message:
         prompt += f"\n\nOriginal commit message (for reference):\n{original_message}\n"
 
+    # Apply rate limiting
+    if rate_limiter:
+        rate_limiter.wait_if_needed()
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -141,14 +170,41 @@ Code Changes:
             max_tokens=500,
             temperature=0.7,
         )
-        return response.choices[0].message.content.strip()
+        result = response.choices[0].message.content.strip()
+
+        # Cache the response
+        if cache:
+            cache.set(diff_text, model, result, style)
+
+        return result
+
+    except RateLimitError as e:
+        logging.error(f"Rate limit exceeded: {e}")
+        print("Error: OpenAI rate limit exceeded. Please try again later.", file=sys.stderr)
+        return None
+    except APIConnectionError as e:
+        logging.error(f"API connection error: {e}")
+        print("Error: Could not connect to OpenAI API. Check your internet connection.", file=sys.stderr)
+        return None
+    except APIError as e:
+        logging.error(f"OpenAI API error: {e}")
+        print(f"Error: OpenAI API error - {e}", file=sys.stderr)
+        return None
     except Exception as e:
-        logging.error(f"Error generating commit message: {e}")
+        logging.error(f"Unexpected error generating commit message: {e}")
+        print(f"Error: Unexpected error - {e}", file=sys.stderr)
         return None
 
 
 def main() -> None:
     args = parse_args()
+
+    # Handle cache clearing
+    if args.clear_cache:
+        cache = APICache()
+        cleared = cache.clear()
+        print(f"Cleared {cleared} cached entries")
+        sys.exit(0)
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -178,10 +234,21 @@ def main() -> None:
         print("No changes to generate commit message for", file=sys.stderr)
         sys.exit(1)
 
+    # Initialize cache and rate limiter
+    cache = None if args.no_cache else APICache()
+    rate_limiter = RateLimiter(max_calls_per_minute=50)
+
     # Generate commit message
     client = OpenAI(api_key=api_key)
     commit_message = generate_commit_message(
-        client, args.model, diff_text, original_message, args.style, args.max_length
+        client,
+        args.model,
+        diff_text,
+        original_message,
+        args.style,
+        args.max_length,
+        cache=cache,
+        rate_limiter=rate_limiter,
     )
 
     if not commit_message:
