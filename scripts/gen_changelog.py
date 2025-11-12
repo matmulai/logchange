@@ -46,10 +46,15 @@ def summarize_commit(commit, client, model, max_tokens=300):
     """
     commit_message = commit.message.strip()
     parent = commit.parents[0] if commit.parents else NULL_TREE
-    diff = "\n".join(
-        d.diff.decode("utf-8", errors="ignore")
-        for d in commit.diff(parent, create_patch=True)
-    )
+
+    try:
+        diff = "\n".join(
+            d.diff.decode("utf-8", errors="ignore")
+            for d in commit.diff(parent, create_patch=True)
+        )
+    except Exception as e:
+        logging.error(f"Error getting diff for commit {commit.hexsha[:7]}: {e}")
+        diff = ""
 
     prompt = f"""
     You are an AI assistant creating a human-readable changelog.
