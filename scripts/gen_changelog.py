@@ -7,7 +7,7 @@ from datetime import datetime
 
 import git
 from git import NULL_TREE
-import openai
+from openai import OpenAI
 from tqdm import tqdm
 
 # Configure logging
@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-def summarize_commit(commit, model, max_tokens=300):
+def summarize_commit(commit, client, model, max_tokens=300):
     """
     Generate a summary of a commit using OpenAI.
     """
@@ -65,7 +65,7 @@ def summarize_commit(commit, model, max_tokens=300):
     """
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": "Summarize code changes for changelogs."},
@@ -73,18 +73,18 @@ def summarize_commit(commit, model, max_tokens=300):
             ],
             max_tokens=max_tokens,
         )
-        return response.choices[0].message["content"].strip()
+        return response.choices[0].message.content.strip()
     except Exception as e:
         logging.error(f"Error summarizing commit {commit.hexsha[:7]}: {e}")
         return "Summary unavailable."
 
-def generate_changelog(repo, model, max_commits=50):
+def generate_changelog(repo, client, model, max_commits=50):
     """
     Generate a changelog with OpenAI-generated summaries.
     """
     changelog = []
     for commit in tqdm(repo.iter_commits(max_count=max_commits), desc="Processing commits"):
-        summary = summarize_commit(commit, model)
+        summary = summarize_commit(commit, client, model)
         changelog.append({
             "hash": commit.hexsha[:7],
             "message": commit.message.strip(),
@@ -111,14 +111,15 @@ def write_changelog_to_markdown(changelog, output_file: str) -> None:
 def main() -> None:
     args = parse_args()
 
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-    if not openai.api_key:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
         raise ValueError(
             "OpenAI API key is not set. Please configure the 'OPENAI_API_KEY' environment variable."
         )
 
+    client = OpenAI(api_key=api_key)
     repo = git.Repo(args.repo)
-    changelog = generate_changelog(repo, args.model, max_commits=args.max_commits)
+    changelog = generate_changelog(repo, client, args.model, max_commits=args.max_commits)
     write_changelog_to_markdown(changelog, args.output)
     print(f"Changelog generated and saved to '{args.output}'")
 
