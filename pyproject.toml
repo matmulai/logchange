@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "logchange"
+version = "0.2.0"
+description = "GenAI Assisted Changelog Generation"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "LogChange Contributors"}
+]
+keywords = ["changelog", "git", "openai", "ai", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Version Control :: Git",
+]
+
+dependencies = [
+    "gitpython>=3.1.0",
+    "openai>=0.27.0",
+    "tqdm>=4.65.0",
+]
+
+[project.scripts]
+logchange = "logchange.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/matmulai/logchange"
+Repository = "https://github.com/matmulai/logchange"
+Issues = "https://github.com/matmulai/logchange/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
